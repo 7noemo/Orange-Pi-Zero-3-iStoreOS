@@ -15,7 +15,7 @@ permissions:
 
 env:
   REPO_URL: https://github.com/istoreos/istoreos
-  REPO_BRANCH: istoreos-24.10
+  REPO_BRANCH: istoreos-25.12
   CONFIG_FILE: zero3-istoreos.config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
@@ -148,7 +148,7 @@ jobs:
       run: |
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> "$GITHUB_OUTPUT"
         touch release.txt
-        echo "- Orange Pi Zero 3 (H618) / iStoreOS (istoreos-24.10)" >> release.txt
+        echo "- Orange Pi Zero 3 (H618) / iStoreOS (istoreos-25.12, kernel 6.12)" >> release.txt
         echo "- 内置 AW859A (UWE5622) Wi-Fi 驱动 + 固件（自打包移植）" >> release.txt
         echo "- iStore 应用商店 / 快捷向导 / 中文界面（iStoreOS 原生）" >> release.txt
         echo "- Docker / Docker Compose 已包含" >> release.txt
