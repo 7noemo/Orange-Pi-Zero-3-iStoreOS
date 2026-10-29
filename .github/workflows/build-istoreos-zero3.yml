@@ -66,10 +66,9 @@ jobs:
         git clone --depth 1 --filter=blob:none "$REPO_URL" -b "$REPO_BRANCH" openwrt
         ln -sf /workdir/openwrt "$GITHUB_WORKSPACE/openwrt"
 
-    - name: Load custom configuration
+    - name: Prepare custom files and scripts
       run: |
         [ -e files ] && mv files openwrt/files
-        [ -e "$CONFIG_FILE" ] && mv "$CONFIG_FILE" openwrt/.config
         chmod +x "$DIY_P1_SH" "$DIY_P2_SH"
 
     - name: Run diy-part1 (vendor UWE5622 driver + firmware)
@@ -80,6 +79,16 @@ jobs:
 
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
+
+    # NOTE: .config must be loaded AFTER feeds update/install.
+    # `scripts/feeds update` calls refresh_config() which runs `make defconfig`
+    # after every feed; if the seed .config is already present at that point,
+    # all CONFIG_PACKAGE_* values for feed packages (luci-app-store,
+    # luci-app-quickstart, dockerd, xz-utils, ...) are silently dropped
+    # because their symbols do not exist in the not-yet-installed metadata.
+    - name: Load custom configuration
+      run: |
+        [ -e "$CONFIG_FILE" ] && cp "$CONFIG_FILE" openwrt/.config
 
     - name: Run diy-part2
       run: cd openwrt && "$GITHUB_WORKSPACE/$DIY_P2_SH"
@@ -96,12 +105,12 @@ jobs:
       run: |
         cd openwrt
         fail=0
-        for p in kmod-uwe5622 uwe5622-firmware curl luci-app-store luci-app-quickstart dockerd; do
+        for p in kmod-uwe5622 uwe5622-firmware curl xz-utils luci-app-store luci-app-quickstart dockerd; do
           if grep -q "^CONFIG_PACKAGE_$p=y" .config; then
             echo "OK: $p enabled"
           elif grep -q "^# CONFIG_PACKAGE_$p is not set" .config; then
             echo "FAIL: $p exists but was dropped by defconfig (unmet dependency):"
-            line=$(grep -nE "^[[:space:]]*config PACKAGE_$p[[:space:]]*$" tmp/.config-package.in | head -1 | cut -d: -f1)
+            line=$(grep -nE "^[[:space:]]*(menu)?config[[:space:]]+PACKAGE_$p[[:space:]]*$" tmp/.config-package.in | head -1 | cut -d: -f1)
             [ -n "$line" ] && sed -n "${line},$((line+30))p" tmp/.config-package.in
             fail=1
           else
