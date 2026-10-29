@@ -60,26 +60,6 @@ building for OpenWrt.
 PATCH
 echo "[diy-part1] patched uwe5622 for backports-6.18 cfg80211 API"
 
-# --- 2c. relax -Werror for the vendor driver (kernel 6.12 = CONFIG_WERROR) ---
-# iStoreOS 25.12 builds kernel 6.12 with warnings promoted to errors, and this
-# (2019-era) Unisoc driver does not survive that:
-#   unisocwifi/cmdevt.c:3639: error: ISO C90 forbids variable length array 'r_buf'
-#                            [-Werror=vla]  -> "all warnings being treated as errors"
-# Neither module sets -Werror itself, so it comes from the kernel's KBUILD_CFLAGS.
-# Append -Wno-error / -Wno-vla to both module Makefiles (ccflags-y is applied
-# after KBUILD_CFLAGS) and also turn the one known VLA into a constant array.
-cat >> package/kernel/uwe5622/Makefile <<'MAKE'
-
-# OpenWrt 25.12 / kernel 6.12 build flags fixup (vendor driver: Unisoc uwe5622)
-define Build/Prepare
-	$(call Build/Prepare/Default)
-	echo 'ccflags-y += -Wno-error -Wno-vla' >> $(PKG_BUILD_DIR)/unisocwifi/Makefile
-	echo 'ccflags-y += -Wno-error -Wno-vla' >> $(PKG_BUILD_DIR)/unisocwcn/Makefile
-	sed -i 's/u8 r_buf\[r_len\];/u8 r_buf[sizeof(*packet)];/' $(PKG_BUILD_DIR)/unisocwifi/cmdevt.c
-endef
-MAKE
-echo "[diy-part1] relaxed -Werror/-Wvla for uwe5622 modules"
-
 # --- 2c. VLA reply buffers (-Werror=vla under CONFIG_WERROR) ---
 # The sunxi 6.12 kernel is built with CONFIG_WERROR. uwe5622 still sized three
 # reply buffers with a runtime u16 (u8 r_buf[r_len]), which gcc treats as a
@@ -133,12 +113,21 @@ Ported from armbian/uwe5622 d6a378a and fa9d1a6.
  
  	struct sprdwl_priv *priv = wiphy_priv(wiphy);
 PATCH
-# ccflags-y is applied after KBUILD_CFLAGS (scripts/Makefile.lib), so this
-# overrides the kernel's -Werror for this package only.
-for mk in package/kernel/uwe5622/unisocwifi/Makefile \
-          package/kernel/uwe5622/unisocwcn/Makefile; do
-  { echo 'ccflags-y += -Wno-error'; cat "$mk"; } > "$mk.new" && mv "$mk.new" "$mk"
-done
+# ccflags-y is applied after KBUILD_CFLAGS (scripts/Makefile.build: _c_flags),
+# so -Wno-error overrides the kernel's -Werror for this package only. The module
+# Makefiles are part of the *downloaded* source, not of the package dir, so the
+# flags have to be injected after the source has been unpacked: append a
+# Build/Prepare override that runs the default prepare first.
+cat >> package/kernel/uwe5622/Makefile <<'MAKE'
+
+# iStoreOS 25.12 / kernel 6.12 builds with CONFIG_WERROR (-Werror): keep
+# remaining warnings of this vendor driver non-fatal.
+define Build/Prepare
+	$(call Build/Prepare/Default)
+	echo 'ccflags-y += -Wno-error' >> $(PKG_BUILD_DIR)/unisocwifi/Makefile
+	echo 'ccflags-y += -Wno-error' >> $(PKG_BUILD_DIR)/unisocwcn/Makefile
+endef
+MAKE
 echo "[diy-part1] patched uwe5622 VLA reply buffers"
 
 # --- 3. curl (luci-app-store / opkg dependency, dropped in 25.12 fork) ---
