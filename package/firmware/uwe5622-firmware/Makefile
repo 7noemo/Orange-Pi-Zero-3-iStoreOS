@@ -7,7 +7,10 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=uwe5622-firmware
-PKG_VERSION:=2026-10
+# NOTE: PKG_VERSION must be apk-compatible: '-' starts a suffix (r1/rc1...),
+# so a date like 2026-10 is rejected by apk mkpkg ("package version is
+# invalid"). Use dots instead.
+PKG_VERSION:=2026.10
 PKG_RELEASE:=1
 
 include $(INCLUDE_DIR)/package.mk
