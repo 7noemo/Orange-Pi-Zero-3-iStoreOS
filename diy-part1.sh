@@ -60,6 +60,67 @@ building for OpenWrt.
 PATCH
 echo "[diy-part1] patched uwe5622 for backports-6.18 cfg80211 API"
 
+# --- 2c. VLA reply buffers (-Werror=vla under CONFIG_WERROR) ---
+# The sunxi 6.12 kernel is built with CONFIG_WERROR. uwe5622 still sized three
+# reply buffers with a runtime u16 (u8 r_buf[r_len]), which gcc treats as a
+# variable-length array:
+#   cmdevt.c:3639: error: ISO C90 forbids variable length array 'r_buf' [-Werror=vla]
+# Port the upstream fixes (armbian/uwe5622 d6a378a + fa9d1a6) so the arrays use
+# the sizeof expression the lengths are computed from. Also keep any remaining
+# driver warning non-fatal, otherwise one warning aborts a 60 minute build.
+cat > package/kernel/uwe5622/patches/015-fix-wvla-reply-buffers.patch <<'PATCH'
+Subject: [PATCH] unisocwifi: size the reply buffers with sizeof (-Wvla)
+
+sprdwl_set_packet_offload(), sprdwl_vendor_get_llstat_handler() and
+sprdwl_vendor_clr_llstat_handler() size r_buf[] by a u16 that only ever holds
+a sizeof value, so gcc sees a variable-length array and kernels built with
+CONFIG_WERROR fail with -Werror=vla.
+
+Use the sizeof expression as the array size; r_len keeps its role as the
+in/out reply length.
+
+Ported from armbian/uwe5622 d6a378a and fa9d1a6.
+
+--- a/unisocwifi/cmdevt.c
++++ b/unisocwifi/cmdevt.c
+@@ -3630,7 +3630,7 @@ int sprdwl_set_packet_offload(struct sprdwl_priv *priv, u8 vif_ctx_id,
+ 	struct sprdwl_cmd_packet_offload *p;
+ 	struct sprdwl_cmd_packet_offload *packet = NULL;
+ 	u16 r_len = sizeof(*packet);
+-	u8 r_buf[r_len];
++	u8 r_buf[sizeof(*packet)];
+ 
+ 	msg = sprdwl_cmd_getbuf(priv, sizeof(*p) + len, vif_ctx_id,
+ 				SPRDWL_HEAD_RSP, WIFI_CMD_PACKET_OFFLOAD);
+--- a/unisocwifi/vendor.c
++++ b/unisocwifi/vendor.c
+@@ -471,7 +471,7 @@ static int sprdwl_vendor_get_llstat_handler(struct wiphy *wiphy,
+ 	struct wifi_iface_stat *iface_st;
+ 	struct sprdwl_llstat_radio *dif_radio;
+ 	u16 r_len = sizeof(*llst);
+-	u8 r_buf[r_len], ret, i;
++	u8 r_buf[sizeof(*llst)], ret, i;
+ 	u32 reply_radio_length, reply_iface_length;
+ 
+ 	struct sprdwl_priv *priv = wiphy_priv(wiphy);
+@@ -593,7 +593,7 @@ static int sprdwl_vendor_clr_llstat_handler(struct wiphy *wiphy,
+ 	struct nlattr *tb[SPRDWL_LL_STATS_CLR_MAX + 1];
+ 	u32 *stats_clear_rsp_mask, stats_clear_req_mask = 0;
+ 	u16 r_len = sizeof(*stats_clear_rsp_mask);
+-	u8 r_buf[r_len];
++	u8 r_buf[sizeof(*stats_clear_rsp_mask)];
+ 	u32 reply_length, ret, err;
+ 
+ 	struct sprdwl_priv *priv = wiphy_priv(wiphy);
+PATCH
+# ccflags-y is applied after KBUILD_CFLAGS (scripts/Makefile.lib), so this
+# overrides the kernel's -Werror for this package only.
+for mk in package/kernel/uwe5622/unisocwifi/Makefile \
+          package/kernel/uwe5622/unisocwcn/Makefile; do
+  { echo 'ccflags-y += -Wno-error'; cat "$mk"; } > "$mk.new" && mv "$mk.new" "$mk"
+done
+echo "[diy-part1] patched uwe5622 VLA reply buffers"
+
 # --- 3. curl (luci-app-store / opkg dependency, dropped in 25.12 fork) ---
 git clone --depth 1 --filter=blob:none https://github.com/openwrt/packages.git /tmp/owrt-pkgs
 rm -rf package/vendor/curl
