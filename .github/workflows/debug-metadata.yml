@@ -71,9 +71,16 @@ jobs:
         done
         echo
         echo "===== 4. kconfig symbols in .config-package.in ====="
-        for p in luci-app-store dockerd; do
+        for p in luci-app-store luci-app-quickstart dockerd; do
           grep -n "config PACKAGE_$p\b" tmp/.config-package.in | head -3 || echo "NOT IN .config-package.in: $p"
         done
+        echo "--- full store definition block (with deps) ---"
+        line=$(grep -nE "^[[:space:]]*config PACKAGE_luci-app-store[[:space:]]*$" tmp/.config-package.in | head -1 | cut -d: -f1)
+        echo "line=$line"
+        sed -n "$((line-3)),$((line+25))p" tmp/.config-package.in
+        echo
+        echo "--- FEED_* symbols in .config ---"
+        grep -E "CONFIG_FEED_|CONFIG_PER_FEED_REPO" .config || echo "NO FEED_ symbols in .config"
         echo
         echo "===== 5. .config-feeds.in (feed wrapper) ====="
         ls -la tmp/.config-feeds.in 2>&1
@@ -93,3 +100,4 @@ jobs:
           openwrt/tmp/.config-feeds.in
           openwrt/.config
         if-no-files-found: ignore
+        include-hidden-files: true
