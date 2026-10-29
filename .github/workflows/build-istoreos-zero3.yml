@@ -1,0 +1,201 @@
+#
+# Build iStoreOS firmware for Orange Pi Zero 3 (Allwinner H618)
+# Base: iStoreOS istoreos-24.10 branch (OpenWrt 24.10 / kernel 6.6)
+# Wi-Fi: vendored kmod-uwe5622 (ImmortalWrt) + firmware files
+#
+
+name: Build iStoreOS Zero 3
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  REPO_URL: https://github.com/istoreos/istoreos
+  REPO_BRANCH: istoreos-24.10
+  CONFIG_FILE: zero3-istoreos.config
+  DIY_P1_SH: diy-part1.sh
+  DIY_P2_SH: diy-part2.sh
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Clean up disk space
+      run: |
+        sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+        sudo docker system prune -a -f
+        df -h
+
+    - name: Initialization environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install --no-install-recommends \
+          ack antlr3 asciidoc autoconf automake autopoint binutils bison \
+          build-essential bzip2 ccache cmake cpio curl device-tree-compiler \
+          fastjar flex gawk gettext gcc-multilib g++-multilib git gperf \
+          haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev \
+          libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev \
+          libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev \
+          libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip \
+          p7zip-full patch pkgconf python3 python3-pyelftools \
+          python3-setuptools qemu-utils rsync scons squashfs-tools \
+          subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+
+    - name: Clone source code (Shallow Clone)
+      working-directory: /workdir
+      run: |
+        df -hT $PWD
+        git clone --depth 1 --filter=blob:none "$REPO_URL" -b "$REPO_BRANCH" openwrt
+        ln -sf /workdir/openwrt "$GITHUB_WORKSPACE/openwrt"
+
+    - name: Load custom configuration
+      run: |
+        [ -e files ] && mv files openwrt/files
+        [ -e "$CONFIG_FILE" ] && mv "$CONFIG_FILE" openwrt/.config
+        chmod +x "$DIY_P1_SH" "$DIY_P2_SH"
+
+    - name: Run diy-part1 (vendor UWE5622 driver + firmware)
+      run: cd openwrt && "$GITHUB_WORKSPACE/$DIY_P1_SH"
+
+    - name: Update feeds
+      run: cd openwrt && ./scripts/feeds update -a
+
+    - name: Install feeds
+      run: cd openwrt && ./scripts/feeds install -a
+
+    - name: Run diy-part2
+      run: cd openwrt && "$GITHUB_WORKSPACE/$DIY_P2_SH"
+
+    - name: Download package
+      id: package
+      run: |
+        cd openwrt
+        make defconfig
+        make download -j$(nproc) || make download -j8 V=s
+        find dl -size -1024c -delete
+
+    - name: Verify key packages in .config
+      run: |
+        cd openwrt
+        fail=0
+        for p in kmod-uwe5622 uwe5622-firmware luci-app-store luci-app-quickstart dockerd; do
+          if grep -q "^CONFIG_PACKAGE_$p=y" .config; then
+            echo "OK: $p enabled"
+          elif grep -q "^# CONFIG_PACKAGE_$p is not set" .config; then
+            echo "FAIL: $p exists but was dropped by defconfig (unmet dependency):"
+            grep -A30 "^config PACKAGE_$p\$" tmp/.config-package.in | head -35
+            fail=1
+          else
+            echo "FAIL: $p not found in package metadata"
+            fail=1
+          fi
+        done
+        [ "$fail" -eq 0 ] || exit 1
+
+    - name: Compile the firmware
+      id: compile
+      run: |
+        cd openwrt
+        echo "Using $(($(nproc) - 1)) cores for compilation"
+        make -j$(($(nproc) - 1)) || make -j2 || make -j1 V=s
+        echo "status=success" >> "$GITHUB_OUTPUT"
+        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> "$GITHUB_ENV"
+        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> "$GITHUB_ENV"
+
+    - name: Check space usage
+      if: (!cancelled())
+      run: df -hT
+
+    - name: Organize files
+      id: organize
+      if: env.UPLOAD_FIRMWARE == 'true' && steps.compile.outputs.status == 'success'
+      run: |
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        echo "FIRMWARE=$PWD" >> "$GITHUB_ENV"
+        echo "status=success" >> "$GITHUB_OUTPUT"
+
+    - name: Upload firmware directory
+      uses: actions/upload-artifact@v4
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        name: iStoreOS_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE }}
+        if-no-files-found: error
+
+    - name: Generate release tag
+      id: tag
+      if: env.UPLOAD_RELEASE == 'true' && steps.compile.outputs.status == 'success' && !cancelled()
+      run: |
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> "$GITHUB_OUTPUT"
+        touch release.txt
+        echo "- Orange Pi Zero 3 (H618) / iStoreOS (istoreos-24.10)" >> release.txt
+        echo "- 内置 AW859A (UWE5622) Wi-Fi 驱动 + 固件（自打包移植）" >> release.txt
+        echo "- iStore 应用商店 / 快捷向导 / 中文界面（iStoreOS 原生）" >> release.txt
+        echo "- Docker / Docker Compose 已包含" >> release.txt
+        echo "status=success" >> "$GITHUB_OUTPUT"
+
+    - name: Verify manifest and annotate release
+      if: steps.tag.outputs.status == 'success' && !cancelled()
+      run: |
+        cd openwrt/bin/targets/*/*
+        MANIFEST=$(ls *.manifest 2>/dev/null | head -1)
+        REL="$GITHUB_WORKSPACE/release.txt"
+        if [ -n "$MANIFEST" ]; then
+          for p in kmod-uwe5622 uwe5622-firmware luci-app-store luci-app-quickstart dockerd; do
+            if grep -qE "^$p - " "$MANIFEST"; then
+              echo "- ✅ manifest 校验: $p 已确认在镜像内" >> "$REL"
+            else
+              echo "- ⚠️ manifest 校验: $p 不在镜像内，请检查！" >> "$REL"
+            fi
+          done
+        fi
+
+    - name: Upload firmware to release
+      uses: softprops/action-gh-release@v2
+      if: steps.tag.outputs.status == 'success' && !cancelled()
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        body_path: release.txt
+        files: ${{ env.FIRMWARE }}/*
+
+    - name: Delete workflow runs
+      uses: Mattraks/delete-workflow-runs@v2
+      with:
+        retain_days: 0
+        keep_minimum_runs: 2
+
+    - name: Remove old Releases
+      uses: dev-drprasad/delete-older-releases@master
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        keep_latest: 3
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Post-cleanup
+      run: |
+        sudo rm -rf /workdir/openwrt/dl
+        df -h
