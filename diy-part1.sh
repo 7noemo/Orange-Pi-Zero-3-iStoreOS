@@ -60,6 +60,26 @@ building for OpenWrt.
 PATCH
 echo "[diy-part1] patched uwe5622 for backports-6.18 cfg80211 API"
 
+# --- 2c. relax -Werror for the vendor driver (kernel 6.12 = CONFIG_WERROR) ---
+# iStoreOS 25.12 builds kernel 6.12 with warnings promoted to errors, and this
+# (2019-era) Unisoc driver does not survive that:
+#   unisocwifi/cmdevt.c:3639: error: ISO C90 forbids variable length array 'r_buf'
+#                            [-Werror=vla]  -> "all warnings being treated as errors"
+# Neither module sets -Werror itself, so it comes from the kernel's KBUILD_CFLAGS.
+# Append -Wno-error / -Wno-vla to both module Makefiles (ccflags-y is applied
+# after KBUILD_CFLAGS) and also turn the one known VLA into a constant array.
+cat >> package/kernel/uwe5622/Makefile <<'MAKE'
+
+# OpenWrt 25.12 / kernel 6.12 build flags fixup (vendor driver: Unisoc uwe5622)
+define Build/Prepare
+	$(call Build/Prepare/Default)
+	echo 'ccflags-y += -Wno-error -Wno-vla' >> $(PKG_BUILD_DIR)/unisocwifi/Makefile
+	echo 'ccflags-y += -Wno-error -Wno-vla' >> $(PKG_BUILD_DIR)/unisocwcn/Makefile
+	sed -i 's/u8 r_buf\[r_len\];/u8 r_buf[sizeof(*packet)];/' $(PKG_BUILD_DIR)/unisocwifi/cmdevt.c
+endef
+MAKE
+echo "[diy-part1] relaxed -Werror/-Wvla for uwe5622 modules"
+
 # --- 2c. VLA reply buffers (-Werror=vla under CONFIG_WERROR) ---
 # The sunxi 6.12 kernel is built with CONFIG_WERROR. uwe5622 still sized three
 # reply buffers with a runtime u16 (u8 r_buf[r_len]), which gcc treats as a
