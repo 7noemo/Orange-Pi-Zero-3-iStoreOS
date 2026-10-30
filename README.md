@@ -14,7 +14,7 @@
 - **AW859A Wi-Fi**：`kmod-uwe5622`（ImmortalWrt 驱动包）+ `uwe5622-firmware`（sparse-checkout armbian/firmware）
 - Docker / Docker Compose / luci-app-dockerman
 - htop / iperf3 / ttyd / UPnP / 网络唤醒
-- rootfs 分区 512 MiB（容纳 Docker、iStore 等组件）
+- rootfs 分区 2 GiB（容纳 Docker、iStore 等组件）
 - Release note 自动做 manifest 校验（Wi-Fi 驱动、商店等关键包确认在镜像内）
 
 ## 固件下载
