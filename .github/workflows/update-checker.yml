@@ -1,0 +1,60 @@
+#
+# Check istoreos/istoreos (istoreos-25.12) for new commits and trigger a rebuild
+# when the upstream branch moves. Same pattern as Orange-Pi-Zero-3-Openwrt.
+#
+
+name: Update Checker
+
+env:
+  REPO_URL: https://github.com/istoreos/istoreos
+  REPO_BRANCH: istoreos-25.12
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 */18 * * *"  # 每18小时检查一次
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Get Commit Hash (Shallow Clone)
+      id: getHash
+      run: |
+        git clone --depth 1 --filter=blob:none "$REPO_URL" -b "$REPO_BRANCH" temp_repo
+        cd temp_repo
+        echo "commitHash=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+        cd ..
+        rm -rf temp_repo
+
+    - name: Compare Commit Hash
+      id: cacheHash
+      uses: actions/cache@v4
+      with:
+        path: .commitHash
+        key: commitHash_${{ steps.getHash.outputs.commitHash }}
+        restore-keys: |
+          commitHash_
+
+    - name: Save New Commit Hash
+      if: steps.cacheHash.outputs.cache-hit != 'true'
+      run: |
+        echo "${{ steps.getHash.outputs.commitHash }}" > .commitHash
+
+    - name: Trigger build (if new commit)
+      if: steps.cacheHash.outputs.cache-hit != 'true'
+      uses: peter-evans/repository-dispatch@v3
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        event-type: Source Code Update
+
+    - name: Clean up old workflow runs
+      uses: Mattraks/delete-workflow-runs@v2
+      with:
+        retain_days: 0
+        keep_minimum_runs: 1
