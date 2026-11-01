@@ -40,6 +40,8 @@ dd if=istoreos-*.img of=/dev/sdX bs=4M conv=fsync
 
 手动触发：Actions → Build iStoreOS Zero 3 → Run workflow。
 
+自动构建：`Update Checker` 每 18 小时比对 `istoreos/istoreos` 的 `istoreos-25.12` 分支 HEAD，上游有新提交即自动触发一次构建并发布新 Release。
+
 首个成功构建：[2026.10.30-0842](https://github.com/7noemo/Orange-Pi-Zero-3-iStoreOS/releases/tag/2026.10.30-0842)
 （istoreos-25.12 / 内核 6.12.112，8 个关键包 manifest 校验全部通过）。
 
